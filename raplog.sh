@@ -9,12 +9,13 @@
 #   - Power (W) per domain, 9 decimal digits
 #   - Per-core frequency (MHz)
 #   - CPU governor
+#   - Intel Turbo Status (1=Enabled, 0=Disabled)
 #   - Package temperature (°C)
 # Outputs CSV to stdout by default or optional file with -o <file>
 # -----------------------------------------
 
 INTERVAL=5  # seconds between measurements
-VERSION="0.1"
+VERSION="0.2"
 
 echo "raplog: RAPL logger for Intel CPUs - $VERSION"
 
@@ -65,7 +66,7 @@ for cpu in $CPUS; do
   HEADER="$HEADER,${CPU_NAME}_MHz"
 done
 
-HEADER="$HEADER,cpu_governor,temp_C"
+HEADER="$HEADER,cpu_governor,turbo_enabled,temp_C"
 
 # Print header
 echo "$HEADER"
@@ -114,11 +115,22 @@ while true; do
   # CPU governor (first core)
   GOV=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null)
 
+  # Intel Turbo Boost status
+  # /sys/.../no_turbo: 0 means Turbo is enabled, 1 means disabled.
+  # Convert to CSV-friendly format: 1 (Enabled) or 0 (Disabled).
+  TURBO_PATH="/sys/devices/system/cpu/intel_pstate/no_turbo"
+  if [ -f "$TURBO_PATH" ]; then
+    TURBO_RAW=$(cat "$TURBO_PATH")
+    [ "$TURBO_RAW" = "0" ] && TURBO="1" || TURBO="0"
+  else
+    TURBO="N/A"
+  fi
+
   # Temperature (package 0)
   TEMP=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
   TEMP=$(awk -v t="$TEMP" 'BEGIN {print t/1000}') # m°C → °C
 
-  LINE="$LINE,$GOV,$TEMP"
+  LINE="$LINE,$GOV,$TURBO,$TEMP"
 
   # Print to stdout
   echo "$LINE"
