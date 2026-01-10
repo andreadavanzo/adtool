@@ -14,14 +14,15 @@
 # Outputs CSV to stdout by default or optional file with -o <file>
 # -----------------------------------------
 
-VERSION="0.6"
+VERSION="0.7"
 
 # Handle arguments
-while getopts "o:i:" opt; do
+while getopts "o:i:t:" opt; do
   case $opt in
     o) OUTFILE="$OPTARG" ;;
     i) INTERVAL="$OPTARG" ;;
-    *) echo "Usage: $0 [-o outfile] [-i interval]"; exit 1 ;;
+    t) TAG="$OPTARG" ;;
+    *) echo "Usage: $0 [-o outfile] [-i interval] [-t tag]"; exit 1 ;;
   esac
 done
 
@@ -148,7 +149,12 @@ while true; do
   TEMP=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
   TEMP=$(awk -v t="$TEMP" 'BEGIN {print t/1000}') # m°C → °C
 
-  LINE="$LINE,$GOV,$TURBO,$TEMP"
+  # Process Attribution ---
+  RAW_PROC=$(top -b -n 1 | grep -E "^[ ]*[0-9]+" | grep -v "raplog" | head -n 1)
+  TOP_NAME=$(echo "$RAW_PROC" | awk '{for(i=11;i<=NF;i++) printf "%s ", $i; print ""}' | awk '{print $1}' | xargs basename 2>/dev/null)
+  [ -z "$TOP_NAME" ] && TOP_NAME="idle"
+
+  LINE="$LINE,$GOV,$TURBO,$TEMP,$TOP_NAME,$TAG"
 
   # Print to stdout
   echo "$LINE"
