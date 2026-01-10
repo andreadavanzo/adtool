@@ -14,8 +14,21 @@
 # Outputs CSV to stdout by default or optional file with -o <file>
 # -----------------------------------------
 
-INTERVAL=5  # seconds between measurements
-VERSION="0.4"
+VERSION="0.6"
+
+# Handle arguments
+while getopts "o:i:" opt; do
+  case $opt in
+    o) OUTFILE="$OPTARG" ;;
+    i) INTERVAL="$OPTARG" ;;
+    *) echo "Usage: $0 [-o outfile] [-i interval]"; exit 1 ;;
+  esac
+done
+
+INTERVAL="${INTERVAL:-5}"
+if [ "$INTERVAL" -le 0 ] 2>/dev/null; then
+  INTERVAL=5
+fi
 
 echo "raplog (adtool) - Version $VERSION"
 
@@ -85,23 +98,28 @@ while true; do
     ENERGY_RAW=$(cat "$D")            # raw energy in µJ
     PREV=$(cat "/tmp/${NAME}_prev")
 
-    # Wraparound handling
-    if [ "$ENERGY_RAW" -lt "$PREV" ]; then
-      MAX=$(cat "$(dirname "$D")/max_energy_range_uj")
-      DELTA_UJ=$(awk -v cur="$ENERGY_RAW" -v prev="$PREV" -v max="$MAX" \
-          'BEGIN {print cur + max - prev}')
+    # Detect max range for this specific domain
+    MAX_PATH="$(dirname "$D")/max_energy_range_uj"
+    if [ -f "$MAX_PATH" ]; then
+      MAX=$(cat "$MAX_PATH")
     else
-      DELTA_UJ=$(awk -v cur="$ENERGY_RAW" -v prev="$PREV" 'BEGIN {print cur - prev}')
+      MAX=4294967296  # Fallback to 2^32 if system doesn't specify
+    fi
+
+    # Wraparound handling logic
+    if [ "$ENERGY_RAW" -lt "$PREV" ]; then
+      DELTA_UJ=$(awk -v cur="$ENERGY_RAW" -v prev="$PREV" -v max="$MAX" \
+          'BEGIN { print (max - prev) + cur }')
+    else
+      DELTA_UJ=$(awk -v cur="$ENERGY_RAW" -v prev="$PREV" \
+          'BEGIN { print cur - prev }')
     fi
 
     # Convert energy delta to Watts (W) with 9 decimal digits
     POWER=$(awk -v delta="$DELTA_UJ" -v interval="$INTERVAL" \
       'BEGIN {printf "%.9f", (delta/1000000)/interval}')
 
-    # Append raw energy and calculated power to CSV line
     LINE="$LINE,$ENERGY_RAW,$POWER"
-
-    # Save current for next iteration
     echo "$ENERGY_RAW" > "/tmp/${NAME}_prev"
   done
 
