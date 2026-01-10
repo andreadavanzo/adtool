@@ -15,9 +15,9 @@
 # -----------------------------------------
 
 INTERVAL=5  # seconds between measurements
-VERSION="0.2"
+VERSION="0.3"
 
-echo "raplog: RAPL logger for Intel CPUs - $VERSION"
+echo "raplog (adtool) - Version $VERSION"
 
 # Handle optional output file
 if [ "$1" = "-o" ] && [ -n "$2" ]; then
