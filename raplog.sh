@@ -15,7 +15,7 @@
 # -----------------------------------------
 
 INTERVAL=5  # seconds between measurements
-VERSION="0.3"
+VERSION="0.4"
 
 echo "raplog (adtool) - Version $VERSION"
 
@@ -121,9 +121,9 @@ while true; do
   TURBO_PATH="/sys/devices/system/cpu/intel_pstate/no_turbo"
   if [ -f "$TURBO_PATH" ]; then
     TURBO_RAW=$(cat "$TURBO_PATH")
-    [ "$TURBO_RAW" = "0" ] && TURBO="1" || TURBO="0"
+    [ "$TURBO_RAW" = "0" ] && TURBO="on" || TURBO="off"
   else
-    TURBO="N/A"
+    TURBO="n/a"
   fi
 
   # Temperature (package 0)
