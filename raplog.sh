@@ -14,7 +14,7 @@
 # Outputs CSV to stdout by default or optional file with -o <file>
 # -----------------------------------------
 
-VERSION="0.7"
+VERSION="0.8"
 
 # Handle arguments
 while getopts "o:i:t:" opt; do
@@ -62,13 +62,7 @@ done
 # Get all CPU cores
 CPUS=$(ls -d /sys/devices/system/cpu/cpu[0-9]*)
 
-# Initialize previous RAPL values
-for D in $DOMAINS; do
-  NAME=$(basename "$(dirname "$D")")
-  cat "$D" > "/tmp/${NAME}_prev"
-done
-
-# Build CSV header
+# Build CSV Header String
 HEADER="timestamp"
 for D in $DOMAINS; do
   NAME=$(basename "$(dirname "$D")")
@@ -79,12 +73,25 @@ for cpu in $CPUS; do
   CPU_NAME=$(basename "$cpu")
   HEADER="$HEADER,${CPU_NAME}_MHz"
 done
+HEADER="$HEADER,cpu_governor,turbo_enabled,temp_C,top_process,tag"
 
-HEADER="$HEADER,cpu_governor,turbo_enabled,temp_C"
+# 4. Initialize Output File (Append Logic)
+if [ -n "$OUTFILE" ]; then
+  mkdir -p "$(dirname "$OUTFILE")"
+  # Add header only if file is new or empty
+  if [ ! -s "$OUTFILE" ]; then
+    echo "$HEADER" > "$OUTFILE"
+  fi
+fi
 
-# Print header
+# 5. Initialize Previous RAPL values (prevents first-row calculation error)
+for D in $DOMAINS; do
+  NAME=$(basename "$(dirname "$D")")
+  cat "$D" > "/tmp/${NAME}_prev"
+done
+
+# Print header to stdout for visibility
 echo "$HEADER"
-[ -n "$OUTFILE" ] && echo "$HEADER" > "$OUTFILE"
 
 # -----------------------------
 # Measurement loop
@@ -127,7 +134,7 @@ while true; do
   # Per-core frequencies
   for cpu in $CPUS; do
     FREQ=$(cat "$cpu/cpufreq/scaling_cur_freq" 2>/dev/null)
-    FREQ=$(awk -v f="$FREQ" 'BEGIN {print f/1000}')  # kHz → MHz
+    FREQ=$(awk -v f="$FREQ" 'BEGIN {print f/1000}')  # kHz to MHz
     LINE="$LINE,$FREQ"
   done
 
@@ -147,16 +154,16 @@ while true; do
 
   # Temperature (package 0)
   TEMP=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
-  TEMP=$(awk -v t="$TEMP" 'BEGIN {print t/1000}') # m°C → °C
+  TEMP=$(awk -v t="$TEMP" 'BEGIN {print t/1000}') # mC to C
 
-  # Process Attribution ---
+  # Process Attribution
   RAW_PROC=$(top -b -n 1 | grep -E "^[ ]*[0-9]+" | grep -v "raplog" | head -n 1)
   TOP_NAME=$(echo "$RAW_PROC" | awk '{for(i=11;i<=NF;i++) printf "%s ", $i; print ""}' | awk '{print $1}' | xargs basename 2>/dev/null)
   [ -z "$TOP_NAME" ] && TOP_NAME="idle"
 
   LINE="$LINE,$GOV,$TURBO,$TEMP,$TOP_NAME,$TAG"
 
-  # Print to stdout
+  # Final Outputs
   echo "$LINE"
 
   # Save to file if requested
