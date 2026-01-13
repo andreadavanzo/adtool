@@ -14,7 +14,7 @@
 # Outputs CSV to stdout by default or optional file with -o <file>
 # -----------------------------------------
 
-VERSION="0.8"
+VERSION="0.9"
 
 # Handle arguments
 while getopts "o:i:t:" opt; do
@@ -66,7 +66,7 @@ CPUS=$(ls -d /sys/devices/system/cpu/cpu[0-9]*)
 HEADER="timestamp"
 for D in $DOMAINS; do
   NAME=$(basename "$(dirname "$D")")
-  HEADER="$HEADER,${NAME}_uj,${NAME}_W"
+  HEADER="$HEADER,${NAME}_raw_uj,${NAME}_delta_uj,${NAME}_W"
 done
 
 for cpu in $CPUS; do
@@ -75,22 +75,23 @@ for cpu in $CPUS; do
 done
 HEADER="$HEADER,cpu_governor,turbo_enabled,temp_C,top_process,tag"
 
-# 4. Initialize Output File (Append Logic)
+# Initialize Output File (Append Logic)
 if [ -n "$OUTFILE" ]; then
   mkdir -p "$(dirname "$OUTFILE")"
-  # Add header only if file is new or empty
-  if [ ! -s "$OUTFILE" ]; then
-    echo "$HEADER" > "$OUTFILE"
-  fi
+  [ ! -s "$OUTFILE" ] && echo "$HEADER" > "$OUTFILE"
 fi
 
-# 5. Initialize Previous RAPL values (prevents first-row calculation error)
+# Initialize Previous RAPL values
 for D in $DOMAINS; do
   NAME=$(basename "$(dirname "$D")")
-  cat "$D" > "/tmp/${NAME}_prev"
+  VAR_SAFE=$(echo "$NAME" | tr ':-' '__')
+  VAL=$(cat "$D")
+  eval "PREV_$VAR_SAFE=\"$VAL\""
 done
 
-# Print header to stdout for visibility
+# PRE-SLEEP (Ensures first row is a real interval delta)
+sleep "$INTERVAL"
+
 echo "$HEADER"
 
 # -----------------------------
@@ -100,35 +101,27 @@ while true; do
   TS=$(date +"%Y-%m-%d %H:%M:%S")
   LINE="$TS"
 
-  # RAPL power per domain
   for D in $DOMAINS; do
     NAME=$(basename "$(dirname "$D")")
-    ENERGY_RAW=$(cat "$D")            # raw energy in µJ
-    PREV=$(cat "/tmp/${NAME}_prev")
+    VAR_SAFE=$(echo "$NAME" | tr ':-' '__')
 
-    # Detect max range for this specific domain
-    MAX_PATH="$(dirname "$D")/max_energy_range_uj"
-    if [ -f "$MAX_PATH" ]; then
-      MAX=$(cat "$MAX_PATH")
-    else
-      MAX=4294967296  # Fallback to 2^32 if system doesn't specify
-    fi
+    ENERGY_RAW=$(cat "$D")
+    eval "PREV=\"\$PREV_$VAR_SAFE\""
 
-    # Wraparound handling logic
+    # Strict delta logic (record 0 on reset)
     if [ "$ENERGY_RAW" -lt "$PREV" ]; then
-      DELTA_UJ=$(awk -v cur="$ENERGY_RAW" -v prev="$PREV" -v max="$MAX" \
-          'BEGIN { print (max - prev) + cur }')
+      DELTA_UJ=0
+      POWER=0
     else
-      DELTA_UJ=$(awk -v cur="$ENERGY_RAW" -v prev="$PREV" \
-          'BEGIN { print cur - prev }')
+      DELTA_UJ=$(awk -v cur="$ENERGY_RAW" -v prev="$PREV" 'BEGIN { print cur - prev }')
+      POWER=$(awk -v delta="$DELTA_UJ" -v interval="$INTERVAL" 'BEGIN {printf "%.9f", (delta/1000000)/interval}')
     fi
 
-    # Convert energy delta to Watts (W) with 9 decimal digits
-    POWER=$(awk -v delta="$DELTA_UJ" -v interval="$INTERVAL" \
-      'BEGIN {printf "%.9f", (delta/1000000)/interval}')
+    # Record all three metrics as requested
+    LINE="$LINE,$ENERGY_RAW,$DELTA_UJ,$POWER"
 
-    LINE="$LINE,$ENERGY_RAW,$POWER"
-    echo "$ENERGY_RAW" > "/tmp/${NAME}_prev"
+    # Update memory for next loop
+    eval "PREV_$VAR_SAFE=\"$ENERGY_RAW\""
   done
 
   # Per-core frequencies
@@ -138,23 +131,15 @@ while true; do
     LINE="$LINE,$FREQ"
   done
 
-  # CPU governor (first core)
+  # Metadata (Governor, Turbo, Temp)
   GOV=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null)
-
-  # Intel Turbo Boost status
-  # /sys/.../no_turbo: 0 means Turbo is enabled, 1 means disabled.
-  # Convert to CSV-friendly format: 1 (Enabled) or 0 (Disabled).
   TURBO_PATH="/sys/devices/system/cpu/intel_pstate/no_turbo"
   if [ -f "$TURBO_PATH" ]; then
-    TURBO_RAW=$(cat "$TURBO_PATH")
-    [ "$TURBO_RAW" = "0" ] && TURBO="on" || TURBO="off"
+    [ "$(cat $TURBO_PATH)" = "0" ] && TURBO="on" || TURBO="off"
   else
     TURBO="n/a"
   fi
-
-  # Temperature (package 0)
-  TEMP=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
-  TEMP=$(awk -v t="$TEMP" 'BEGIN {print t/1000}') # mC to C
+  TEMP=$(awk -v t=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null) 'BEGIN {print t/1000}')
 
   # Process Attribution
   RAW_PROC=$(top -b -n 1 | grep -E "^[ ]*[0-9]+" | grep -v "raplog" | head -n 1)
@@ -163,7 +148,7 @@ while true; do
 
   LINE="$LINE,$GOV,$TURBO,$TEMP,$TOP_NAME,$TAG"
 
-  # Final Outputs
+  # Print outputs
   echo "$LINE"
 
   # Save to file if requested
