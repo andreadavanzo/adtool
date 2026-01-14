@@ -1,4 +1,4 @@
-# adtool (Andrea Davanzo Tool)
+# adtool (Audax Development Tool)
 
 A collection of lightweight shell scripts for (Alpine) Linux.
 
